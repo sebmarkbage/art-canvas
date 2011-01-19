@@ -11,7 +11,8 @@ requires: [ART, ART.Element, ART.Container, ART.Transform, ART.Path]
 
 // Canvas Base Class
 
-var genericContext = document.createElement('canvas').getContext('2d');
+var genericContext = document.createElement('canvas');
+genericContext = genericContext.getContext && genericContext.getContext('2d');
 
 var hitContext = null, currentHitTarget, hitX = 0, hitY = 0;
 
@@ -95,9 +96,6 @@ ART.Canvas.Element = new Class({
 	
 	Implements: ART.Transform,
 
-	initialize: function(tag){
-	},
-
 	inject: function(container){
 		this.eject();
 		this.container = container;
@@ -167,7 +165,7 @@ ART.Canvas.Group = new Class({
 		var children = this.children, hitTarget;
 		for (var i = 0, l = children.length; i < l; i++){
 			context.save();
-			context.transform(this.xx, this.yx, this.xy, this.yy, this.tx, this.ty);
+			context.transform(this.xx, this.yx, this.xy, this.yy, this.x, this.y);
 			var hit = children[i].renderTo(context);
 			if (hit) hitTarget = hit;
 			context.restore();
@@ -188,6 +186,17 @@ ART.Canvas.Base = new Class({
 	
 	/* styles */
 	
+	_addColors: function(gradient, stops){
+		// Enumerate stops, assumes offsets are enumerated in order
+		// TODO: Sort. Chrome doesn't always enumerate in expected order but requires stops to be specified in order.
+		if ('length' in stops) for (var i = 0, l = stops.length - 1; i <= l; i++)
+			gradient.addColorStop(i / l, new Color(stops[i]).toString());
+		else for (var offset in stops)
+			gradient.addColorStop(offset, new Color(stops[offset]).toString());
+		return gradient;
+	},
+
+	
 	fill: function(color){
 		if (arguments.length > 1) return this.fillLinear(arguments);
 		else this._fill = color ? new Color(color).toString() : null;
@@ -195,10 +204,41 @@ ART.Canvas.Base = new Class({
 	},
 
 	fillRadial: function(stops, focusX, focusY, radiusX, radiusY, centerX, centerY){
+		if (focusX == null) focusX = (this.left || 0) + (this.width || 0) * 0.5;
+		if (focusY == null) focusY = (this.top || 0) + (this.height || 0) * 0.5;
+		if (radiusY == null) radiusY = radiusX || (this.height * 0.5) || 0;
+		if (radiusX == null) radiusX = (this.width || 0) * 0.5;
+		if (centerX == null) centerX = focusX;
+		if (centerY == null) centerY = focusY;
+
+		centerX += centerX - focusX;
+		centerY += centerY - focusY;
+		
+		if (radiusX == 0) return this.fillLinear(stops);
+		var ys = radiusY / radiusX;
+
+		var gradient = genericContext.createRadialGradient(focusX, focusY / ys, 0, centerX, centerY / ys, radiusX * 2);
+
+		// Double fill radius to simulate repeating gradient
+		if ('length' in stops) for (var i = 0, l = stops.length - 1; i <= l; i++){
+			gradient.addColorStop(i / l / 2, new Color(stops[i]).toString());
+			gradient.addColorStop(1 - i / l / 2, new Color(stops[i]).toString());
+		} else for (var offset in stops){
+			gradient.addColorStop(offset / 2, new Color(stops[offset]).toString());
+			gradient.addColorStop(1- offset / 2, new Color(stops[offset]).toString());
+		}
+
+		this._fill = gradient;
+		this._fillTransform = new ART.Transform(1, 0, 0, ys);
 		return this.invalidate();
 	},
 
 	fillLinear: function(stops, x1, y1, x2, y2){
+		if (arguments.length < 5) return this;
+		var gradient = genericContext.createLinearGradient(x1, y1, x2, y2);
+		this._addColors(gradient, stops);
+		this._fill = gradient;
+		this._fillTransform = null;
 		return this.invalidate();
 	},
 
@@ -231,6 +271,7 @@ ART.Canvas.Shape = new Class({
 	
 	draw: function(path, width, height){
 		if (!(path instanceof ART.Path)) path = new ART.Path(path);
+		this.path = path;
 		this._commands = path.toCommands();
 		if (width != null) this.width = width;
 		if (height != null) this.height = height;
@@ -239,7 +280,7 @@ ART.Canvas.Shape = new Class({
 	
 	renderTo: function(context){
 		if (this._invisible || !this._commands || (!this._fill && !this._stroke)) return;
-		context.transform(this.xx, this.yx, this.xy, this.yy, this.tx, this.ty);
+		context.transform(this.xx, this.yx, this.xy, this.yy, this.x, this.y);
 		var commands = this._commands,
 			fill = this._fill,
 			stroke = this._stroke;
@@ -249,8 +290,12 @@ ART.Canvas.Shape = new Class({
 			commands[i](context);
 
 		if (fill){
+			context.save();
+			var m = this._fillTransform;
+			if (m) context.transform(m.xx, m.yx, m.xy, m.yy, m.x, m.y);
 			context.fillStyle = fill;
 			context.fill();
+			context.restore();
 		}
 		if (stroke){
 			context.strokeStyle = stroke;
@@ -317,7 +362,7 @@ ART.Canvas.Text = new Class({
 		this._font = font;
 		this._fontSize = em;
 		this._text = lines;
-		this._alignment = fontAnchors[alignment] || alignment;
+		this._alignment = fontAnchors[alignment] || alignment || 'left';
 		
 		var context = genericContext;
 
@@ -336,8 +381,8 @@ ART.Canvas.Text = new Class({
 	},
 
 	renderTo: function(context){
-		if (!this._text || (!this._fill && !this._stroke)) return null;
-		context.transform(this.xx, this.yx, this.xy, this.yy, this.tx, this.ty);
+		if (this._invisible || !this._text || (!this._fill && !this._stroke)) return null;
+		context.transform(this.xx, this.yx, this.xy, this.yy, this.x, this.y);
 		var fill = this._fill, stroke = this._stroke, text = this._text;
 		
 		context.font = this._font;
@@ -371,218 +416,46 @@ ART.Canvas.Text = new Class({
 
 // Path Extensions
 
-var moveTo = function(x, y){
-	return function(context){
+var path;
+
+function moveTo(sx, sy, x, y){
+	path.push(function(context){
 		context.moveTo(x, y);
-	};
+	});
 };
 
-var lineTo = function(x, y){
-	return function(context){
+function lineTo(sx, sy, x, y){
+	path.push(function(context){
 		context.lineTo(x, y);
-	};
+	});
 };
 
-var curveTo = function(cp1x, cp1y, cp2x, cp2y, x, y){
-	return function(context){
+function curveTo(sx, sy, cp1x, cp1y, cp2x, cp2y, x, y){
+	path.push(function(context){
 		context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
-	};
+	});
 };
 
-var arc = function(x, y, radius, startAngle, endAngle, anticlockwise){
-	return function(context){
+function arcTo(sx, sy, ex, ey, x, y, radius, startAngle, endAngle, anticlockwise){
+	path.push(function(context){
 		context.arc(x, y, radius, startAngle, endAngle, anticlockwise);
-	};
+	});
 };
 
-var close = function(context){
-	context.closePath();
+function close(){
+	path.push(function(context){
+		context.closePath();
+	});
 };
-
-// Port from ART.Path - TODO: Generalize
-
-var circle = Math.PI * 2, north = circle / 2, west = north / 2, east = -west, south = 0;
-
-var calculateArc = function(rx, ry, rotation, large, clockwise, x, y, tX, tY){
-	x -= tX; y -= tY;
-	
-	var cx = x / 2, cy = y / 2,
-		rxry = rx * rx * ry * ry,
-		rycx = ry * ry * cx * cx,
-		rxcy = rx * rx * cy * cy,
-		a = rxry - rxcy - rycx;
-
-	if (a < 0){
-		a = Math.sqrt(1 - a / rxry);
-		rx *= a; ry *= a;
-	} else {
-		a = Math.sqrt(a / (rxcy + rycx));
-		if (large == clockwise) a = -a;
-		cx += -a * y / 2 * rx / ry;
-		cy +=  a * x / 2 * ry / rx;
-	}
-
-	var sa = Math.atan2(cx, -cy), ea = Math.atan2(-x + cx, y - cy);
-	if (!+clockwise){ var t = sa; sa = ea; ea = t; }
-	if (ea < sa) ea += circle;
-
-	cx += tX; cy += tY;
-	
-	return {
-		start: (!+clockwise ? ea : sa) + west,
-		end: (!+clockwise ? sa : ea) + west,
-		centerX: cx,
-		centerY: cy,
-		circle: [cx - rx, cy - ry, cx + rx, cy + ry],
-		boundsX: [
-			ea > circle + west || (sa < west && ea > west) ? cx - rx : tX,
-			ea > circle + east || (sa < east && ea > east) ? cx + rx : tX
-		],
-		boundsY: [
-			ea > north ? cy - ry : tY,
-			ea > circle + south || (sa < south && ea > south) ? cy + ry : tY
-		]
-	};
-};
-
-var extrapolate = function(parts){
-	
-	var boundsX = [], boundsY = [];
-	
-	var ux = function(x){
-		boundsX.push(x); return x;
-	}, uy = function(y){
-		boundsY.push(y); return y;
-	}, np = function(v){
-		return v;
-	};
-
-	var reflect = function(sx, sy, ex, ey){
-		return [ex * 2 - sx, ey * 2 - sy];
-	};
-	
-	var X = 0, Y = 0, px = 0, py = 0, r;
-	
-	var path = [], inX, inY;
-	
-	for (i = 0; i < parts.length; i++){
-		var v = Array.slice(parts[i]), f = v.shift(), l = f.toLowerCase();
-		var refX = l == f ? X : 0, refY = l == f ? Y : 0;
-		
-		if (l != 'm' && l != 'z' && inX == null){
-			inX = X; inY = Y;
-		}
-
-		switch (l){
-			
-			case 'm':
-				path.push(moveTo(ux(X = refX + v[0]), uy(Y = refY + v[1])));
-			break;
-			
-			case 'l':
-				path.push(lineTo(ux(X = refX + v[0]), uy(Y = refY + v[1])));
-			break;
-			
-			case 'c':
-				px = refX + v[2]; py = refY + v[3];
-				//path += 'c' + ux(refX + v[0]) + ',' + uy(refY + v[1]) + ',' + ux(px) + ',' + uy(py) + ',' + ux(X = refX + v[4]) + ',' + uy(Y = refY + v[5]);
-				path.push(curveTo(ux(refX + v[0]), uy(refY + v[1]), ux(px), uy(py), ux(X = refX + v[4]), uy(Y = refY + v[5])));
-			break;
-
-			case 's':
-				r = reflect(px, py, X, Y);
-				px = refX + v[0]; py = refY + v[1];
-				//path += 'c' + ux(r[0]) + ',' + uy(r[1]) + ',' + ux(px) + ',' + uy(py) + ',' + ux(X = refX + v[2]) + ',' + uy(Y = refY + v[3]);
-				path.push(curveTo(ux(r[0]), uy(r[1]), ux(px), uy(py), ux(X = refX + v[2]), uy(Y = refY + v[3])));
-			break;
-			
-			case 'q':
-				px = (refX + v[0]); py = (refY + v[1]);
-				path.push(curveTo(ux((X + px * 2) / 3), uy((Y + py * 2) / 3), ux(((X = refX + v[2]) + px * 2) / 3), uy(((Y = refY + v[3]) + py * 2) / 3), ux(X), uy(Y)));
-			break;
-			
-			case 't':
-				r = reflect(px, py, X, Y);
-				px = r[0]; py = r[1];
-				path.push(curveTo(ux((X + px * 2) / 3), uy((Y + py * 2) / 3), ux(((X = refX + v[0]) + px * 2) / 3), uy(((Y = refY + v[1]) + py * 2) / 3), ux(X), uy(Y)));
-			break;
-
-			case 'a':
-				px = refX + v[5]; py = refY + v[6];
-
-				if (!+v[0] || !+v[1] || (px == X && py == Y)){
-					path.push(lineTo(ux(X = px) + ',' + uy(Y = py)));
-					break;
-				}
-				
-				r = calculateArc(v[0], v[0], v[2], v[3], v[4], px, py, X, Y);
-
-				boundsX.push.apply(boundsX, r.boundsX);
-				boundsY.push.apply(boundsY, r.boundsY);
-				
-				path.push(arc(r.centerX, r.centerY, +v[0], r.start, r.end, !+v[4]));
-				r.circle.map(np);
-				ux(X); uy(Y);
-				ux(X = px); uy(Y = py);
-				
-				// TODO: Elliptical arc as bezier
-
-				//path.push(arcTo(X, Y, ux(X = px), uy(Y = py), v[0]));
-				//path += (v[4] == 1 ? 'wa' : 'at') + r.circle.map(np) + ',' + ux(X) + ',' + uy(Y) + ',' + ux(X = px) + ',' + uy(Y = py);
-			break;
-
-			case 'h':
-				path.push(lineTo(ux(X = refX + v[0]), uy(Y)));
-			break;
-			
-			case 'v':
-				path.push(lineTo(ux(X), uy(Y = refY + v[0])));
-			break;
-			
-			case 'z':
-				if (inX != null){
-					//path.push(lineTo(ux(X = inX), uy(Y = inY)));
-					path.push(close);
-					//path.push(moveTo(ux(X = inX), uy(Y = inY)));
-					X = inX; Y = inY;
-					inX = null;
-				}
-			break;
-			
-		}
-		if (l != 's' && l != 'c' && l != 't' && l != 'q'){
-			px = X; py = Y;
-		}
-	}
-	
-	if (!boundsX.length) return [path, {left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0}];
-	
-	var right = Math.max.apply(Math, boundsX),
-		bottom = Math.max.apply(Math, boundsY),
-		left = Math.min.apply(Math, boundsX),
-		top = Math.min.apply(Math, boundsY),
-		height = bottom - top,
-		width = right - left;
-	
-	return [path, {left: left, top: top, right: right, bottom: bottom, width: width, height: height}];
-
-};
-
-var push = ART.Path.prototype.push;
 
 ART.Path.implement({
 
-	push: function(){ //modifying the current path resets the memoized values.
-		this.canvas = null;
-		return push.apply(this, arguments);
-	},
-	
 	toCommands: function(){
-		var renderer = this.canvas;
+		var renderer = this.cache.canvas;
 		if (renderer == null){
-			var data = extrapolate(this.path);
-			this.canvas = renderer = data[0];
-			this.box = data[1];
+			path = [];
+			this.visit(lineTo, curveTo, arcTo, moveTo, close);
+			this.cache.canvas = renderer = path;
 		}
 		return renderer;
 	}
