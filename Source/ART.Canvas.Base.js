@@ -16,12 +16,12 @@ var Canvas = function(){
 
 };
 
-var MODE = Canvas() ? 'Canvas' : null;
+var MODE = Canvas() ? ART.Canvas : null;
 if (!MODE) return;
 
-ART.Shape = new Class({Extends: ART[MODE].Shape});
-ART.Group = new Class({Extends: ART[MODE].Group});
-ART.Text = new Class({Extends: ART[MODE].Text});
-ART.implement({Extends: ART[MODE]});
+ART.Shape = MODE.Shape;
+ART.Group = MODE.Group;
+ART.Text = MODE.Text;
+ART.prototype = MODE.prototype;
 
 })();

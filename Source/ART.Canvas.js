@@ -3,7 +3,7 @@
 name: ART.Canvas
 description: "Canvas implementation for ART"
 provides: [ART.Canvas, ART.Canvas.Group, ART.Canvas.Shape, ART.Canvas.Image, ART.Canvas.Text]
-requires: [ART, ART.Element, ART.Container, ART.Transform, ART.Path]
+requires: [ART, ART.Color, ART.Element, ART.Container, ART.Transform, ART.Path]
 ...
 */
 
@@ -28,10 +28,7 @@ var fps = 1000 / 60, invalids = [], renderTimer, renderInvalids = function(){
 	}
 };
 
-ART.Canvas = new Class({
-
-	Extends: ART.Element,
-	Implements: ART.Container,
+ART.Canvas = ART.Class(ART.Element, ART.Container, {
 
 	initialize: function(width, height){
 		var element = this.element = document.createElement('canvas');
@@ -92,9 +89,7 @@ ART.Canvas = new Class({
 
 // Canvas Element Class
 
-ART.Canvas.Element = new Class({
-	
-	Implements: ART.Transform,
+ART.Canvas.Element = ART.Class(ART.Transform, {
 
 	inject: function(container){
 		this.eject();
@@ -105,7 +100,13 @@ ART.Canvas.Element = new Class({
 
 	eject: function(){
 		var container = this.container;
-		if (container) container.children.erase(this);
+		if (container){
+			var siblings = container.children,
+			    i = siblings.length;
+			while (i--)
+				if (siblings[i] === this)
+					siblings.splice(i, 1);
+		}
 		this.invalidate();
 		this.container = null;
 		return this;
@@ -148,10 +149,7 @@ ART.Canvas.Element = new Class({
 
 // Canvas Group Class
 
-ART.Canvas.Group = new Class({
-	
-	Extends: ART.Canvas.Element,
-	Implements: ART.Container,
+ART.Canvas.Group = ART.Class(ART.Canvas.Element, ART.Container, {
 	
 	initialize: function(width, height){
 		this.width = width;
@@ -177,9 +175,7 @@ ART.Canvas.Group = new Class({
 
 // Canvas Shape Class
 
-ART.Canvas.Base = new Class({
-	
-	Extends: ART.Canvas.Element,
+ART.Canvas.Base = ART.Class(ART.Canvas.Element, {
 
 	initialize: function(){
 	},
@@ -190,16 +186,16 @@ ART.Canvas.Base = new Class({
 		// Enumerate stops, assumes offsets are enumerated in order
 		// TODO: Sort. Chrome doesn't always enumerate in expected order but requires stops to be specified in order.
 		if ('length' in stops) for (var i = 0, l = stops.length - 1; i <= l; i++)
-			gradient.addColorStop(i / l, new Color(stops[i]).toString());
+			gradient.addColorStop(i / l, new ART.Color(stops[i]).toString());
 		else for (var offset in stops)
-			gradient.addColorStop(offset, new Color(stops[offset]).toString());
+			gradient.addColorStop(offset, new ART.Color(stops[offset]).toString());
 		return gradient;
 	},
 
 	
 	fill: function(color){
 		if (arguments.length > 1) return this.fillLinear(arguments);
-		else this._fill = color ? new Color(color).toString() : null;
+		else this._fill = color ? new ART.Color(color).toString() : null;
 		return this.invalidate();
 	},
 
@@ -221,11 +217,11 @@ ART.Canvas.Base = new Class({
 
 		// Double fill radius to simulate repeating gradient
 		if ('length' in stops) for (var i = 0, l = stops.length - 1; i <= l; i++){
-			gradient.addColorStop(i / l / 2, new Color(stops[i]).toString());
-			gradient.addColorStop(1 - i / l / 2, new Color(stops[i]).toString());
+			gradient.addColorStop(i / l / 2, new ART.Color(stops[i]).toString());
+			gradient.addColorStop(1 - i / l / 2, new ART.Color(stops[i]).toString());
 		} else for (var offset in stops){
-			gradient.addColorStop(offset / 2, new Color(stops[offset]).toString());
-			gradient.addColorStop(1- offset / 2, new Color(stops[offset]).toString());
+			gradient.addColorStop(offset / 2, new ART.Color(stops[offset]).toString());
+			gradient.addColorStop(1- offset / 2, new ART.Color(stops[offset]).toString());
 		}
 
 		this._fill = gradient;
@@ -247,7 +243,7 @@ ART.Canvas.Base = new Class({
 	},
 
 	stroke: function(color, width, cap, join){
-		this._stroke = color ? new Color(color).toString() : null;
+		this._stroke = color ? new ART.Color(color).toString() : null;
 		this._strokeWidth = (width != null) ? width : 1;
 		this._strokeCap = (cap != null) ? cap : 'round';
 		this._strokeJoin = (join != null) ? join : 'round';
@@ -258,12 +254,12 @@ ART.Canvas.Base = new Class({
 
 // Canvas Shape Class
 
-ART.Canvas.Shape = new Class({
+ART.Canvas.Shape = ART.Class(ART.Canvas.Base, {
 	
-	Extends: ART.Canvas.Base,
+	base_initialize: ART.Canvas.Base.prototype.initialize,
 	
 	initialize: function(path, width, height){
-		this.parent();
+		this.base_initialize();
 		this.width = width;
 		this.height = height;
 		if (path != null) this.draw(path);
@@ -311,12 +307,12 @@ ART.Canvas.Shape = new Class({
 
 // Canvas Image Class
 
-ART.Canvas.Image = new Class({
-	
-	Extends: ART.Canvas.Base,
+ART.Canvas.Image = ART.Class(ART.Canvas.Base, {
+
+	base_initialize: ART.Canvas.Base.prototype.initialize,
 	
 	initialize: function(src, width, height){
-		this.parent();
+		this.base_initialize();
 		if (arguments.length == 3) this.draw.apply(this, arguments);
 	},
 	
@@ -334,12 +330,12 @@ ART.Canvas.Image = new Class({
 
 var fontAnchors = { middle: 'center' };
 
-ART.Canvas.Text = new Class({
+ART.Canvas.Text = ART.Class(ART.Canvas.Base, {
 
-	Extends: ART.Canvas.Base,
+	base_initialize: ART.Canvas.Base.prototype.initialize,
 
 	initialize: function(text, font, alignment, path){
-		this.parent();
+		this.base_initialize();
 		this.draw.apply(this, arguments);
 	},
 	
@@ -448,18 +444,14 @@ function close(){
 	});
 };
 
-ART.Path.implement({
-
-	toCommands: function(){
-		var renderer = this.cache.canvas;
-		if (renderer == null){
-			path = [];
-			this.visit(lineTo, curveTo, arcTo, moveTo, close);
-			this.cache.canvas = renderer = path;
-		}
-		return renderer;
+ART.Path.prototype.toCommands = function(){
+	var renderer = this.cache.canvas;
+	if (renderer == null){
+		path = [];
+		this.visit(lineTo, curveTo, arcTo, moveTo, close);
+		this.cache.canvas = renderer = path;
 	}
-
-});
+	return renderer;
+};
 
 })();
